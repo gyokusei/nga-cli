@@ -12,11 +12,19 @@
 
 ### 一键安装 (推荐: macOS / Linux)
 
-在你的终端里运行以下命令：
+打开你的终端，复制并运行以下命令即可完成安装：
 
-```bash
-/bin/bash -c "$(curl -fsSL [https://raw.githubusercontent.com/gyokusei/nga-cli/main/scripts/install.sh](https://raw.githubusercontent.com/gyokusei/nga-cli/main/scripts/install.sh))"
-````
+```sh
+curl -fsSL https://raw.githubusercontent.com/gyokusei/nga-cli/main/install.sh | bash
+```
+
+或者使用 `wget`：
+
+```sh
+wget -qO- https://raw.githubusercontent.com/gyokusei/nga-cli/main/install.sh | bash
+```
+
+安装脚本会自动处理环境检查、依赖安装和路径配置提醒。
 
 ### 手动安装
 
