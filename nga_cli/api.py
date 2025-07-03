@@ -96,9 +96,14 @@ class NgaClient:
                 console.print(Panel("[bold yellow]服务器返回了空响应。[/bold yellow]", border_style="yellow"))
                 return None
 
-            # --- 核心修复：移除所有自动修复JSON的尝试，完全依赖标准库进行解析 ---
-            # 如果JSON本身是损坏的（如被截断），解析器会正确地抛出错误。
-            data = json.loads(cleaned_text, strict=False)
+            # --- 核心修复：重新引入智能修复，以处理服务器返回的无效转义字符 ---
+            # 这个正则表达式会查找所有不属于合法JSON转义序列的单个反斜杠，
+            # 并在它们前面再加一个反斜杠，从而修复它们，同时保留合法的转义。
+            # 这旨在解决 'Invalid \uXXXX escape' 这类错误。
+            repaired_text = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', cleaned_text)
+
+            # 如果JSON本身是损坏的（如被截断），解析器仍然会正确地抛出错误。
+            data = json.loads(repaired_text, strict=False)
 
             # 仅在成功时写入常规的响应日志
             with open(config.LAST_RESPONSE_PATH, 'w', encoding='utf-8') as f:
@@ -114,8 +119,7 @@ class NgaClient:
         except (json.JSONDecodeError, httpx.RequestError, Exception) as e:
             self._save_error_log(url, e, params)
 
-            # --- 核心修复：将错误响应写入一个独立的、不会被覆盖的文件 ---
-            # 这样就解决了用户指出的“日志被后续成功请求覆盖”的问题
+            # 将错误响应写入一个独立的、不会被覆盖的文件
             error_log_path = os.path.join(config.CONFIG_DIR, 'last_error_response.txt')
             with open(error_log_path, 'w', encoding='utf-8') as f:
                 f.write(raw_text)  # 保存最原始的、导致错误的文本
