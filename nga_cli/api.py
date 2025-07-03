@@ -83,13 +83,19 @@ class NgaClient:
                 # 2. 如果 utf-8 失败，说明是 gbk，用 gbk 解码
                 raw_text = raw_bytes.decode('gbk', errors='replace')
 
+            # --- 修复：在解析前保存原始响应，便于调试 ---
+            # 这样即便是解析失败，我们也能看到原始数据
+            with open(config.LAST_RESPONSE_PATH, 'w', encoding='utf-8') as f:
+                f.write(raw_text)
+
             # 清理某些接口返回的 JSONP 包装
             if raw_text.startswith('window.script_muti_get_var_store='):
                 raw_text = raw_text[len('window.script_muti_get_var_store='):-1]
 
             data = json.loads(raw_text, strict=False)
 
-            # 保存最终成功解析的响应内容
+            # 保存最终成功解析的响应内容 (格式化后的 JSON)
+            # 这会覆盖上面保存的原始文本，但仅在解析成功时发生
             with open(config.LAST_RESPONSE_PATH, 'w', encoding='utf-8') as f:
                 f.write(json.dumps(data, indent=2, ensure_ascii=False))
 
@@ -104,6 +110,8 @@ class NgaClient:
         except (httpx.RequestError, json.JSONDecodeError, Exception) as e:
             self._save_error_log(url, e, params)
             console.print(Panel(f"[bold red]请求或解析时发生错误:[/bold red] {e}", border_style="red"))
+            # --- 修复：提供更明确的调试指引 ---
+            console.print("[yellow]提示: 导致错误的原始服务器响应已保存。请运行 `nga debug last-response` 查看。[/yellow]")
             return None
 
     def verify_login(self) -> Optional[Dict[str, Any]]:
