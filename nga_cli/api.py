@@ -61,41 +61,48 @@ class NgaClient:
 
     def _request(self, endpoint: str, params: Optional[Dict] = None, method: str = 'GET') -> Optional[Dict[str, Any]]:
         """
-        发送请求并处理响应。
-        使用更鲁棒的解码方式，优先尝试默认解码（UTF-8），失败则回退到 GBK。
+        发送请求并处理响应。增加了对响应内容类型和基本结构的验证。
         """
         url = f"{self.BASE_URL}{endpoint}"
         self._save_request_log(method, url, params, self.headers)
 
+        raw_text = ""  # 在 try 块外部初始化
         try:
             response = self.client.request(method, url, params=params if method == 'GET' else None,
                                            data=params if method == 'POST' else None)
             response.raise_for_status()
 
-            raw_bytes = response.content
-            raw_text = ""
+            content_type = response.headers.get('content-type', '').lower()
+            if 'json' not in content_type:
+                console.print(
+                    Panel(f"[bold red]服务器返回了非预期的内容类型:[/bold red] {content_type}", border_style="red"))
+                with open(config.LAST_RESPONSE_PATH, 'w', encoding='utf-8') as f:
+                    f.write(response.text)
+                console.print("[yellow]原始响应已保存，请运行 `nga debug last-response` 查看。[/yellow]")
+                return None
 
-            # --- 核心修改点：更可靠的解码逻辑 ---
+            raw_bytes = response.content
             try:
-                # 1. 直接用 utf-8 解码 bytes
                 raw_text = raw_bytes.decode('utf-8')
             except UnicodeDecodeError:
-                # 2. 如果 utf-8 失败，说明是 gbk，用 gbk 解码
                 raw_text = raw_bytes.decode('gbk', errors='replace')
 
-            # --- 修复：在解析前保存原始响应，便于调试 ---
-            # 这样即便是解析失败，我们也能看到原始数据
-            with open(config.LAST_RESPONSE_PATH, 'w', encoding='utf-8') as f:
-                f.write(raw_text)
-
-            # 清理某些接口返回的 JSONP 包装
             if raw_text.startswith('window.script_muti_get_var_store='):
                 raw_text = raw_text[len('window.script_muti_get_var_store='):-1]
 
-            data = json.loads(raw_text, strict=False)
+            cleaned_text = raw_text.strip()
 
-            # 保存最终成功解析的响应内容 (格式化后的 JSON)
-            # 这会覆盖上面保存的原始文本，但仅在解析成功时发生
+            if not cleaned_text:
+                console.print(Panel("[bold yellow]服务器返回了空响应。[/bold yellow]", border_style="yellow"))
+                return None
+
+            # --- 核心修复 1：使用更健壮的正则来修复无效的转义 ---
+            # 这会查找所有不属于合法JSON转义序列的单个反斜杠，并修复它们
+            repaired_text = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', cleaned_text)
+
+            data = json.loads(repaired_text, strict=False)
+
+            # 仅在成功时写入常规的响应日志
             with open(config.LAST_RESPONSE_PATH, 'w', encoding='utf-8') as f:
                 f.write(json.dumps(data, indent=2, ensure_ascii=False))
 
@@ -104,14 +111,24 @@ class NgaClient:
                 console.print(Panel(f"[bold red]API 错误:[/bold red] {error_msg}", border_style="red"))
                 return None
 
-            # 返回 data 字段，如果不存在则返回整个解析后的字典
             return data.get("data", data)
 
-        except (httpx.RequestError, json.JSONDecodeError, Exception) as e:
+        except (json.JSONDecodeError, httpx.RequestError, Exception) as e:
             self._save_error_log(url, e, params)
+
+            # --- 核心修复 2：将错误响应写入一个独立的、不会被覆盖的文件 ---
+            # 这样就解决了用户指出的“日志被后续成功请求覆盖”的问题
+            error_log_path = os.path.join(config.CONFIG_DIR, 'last_error_response.txt')
+            with open(error_log_path, 'w', encoding='utf-8') as f:
+                f.write(raw_text)  # 保存最原始的、导致错误的文本
+
             console.print(Panel(f"[bold red]请求或解析时发生错误:[/bold red] {e}", border_style="red"))
-            # --- 修复：提供更明确的调试指引 ---
-            console.print("[yellow]提示: 导致错误的原始服务器响应已保存。请运行 `nga debug last-response` 查看。[/yellow]")
+            if isinstance(e, json.JSONDecodeError):
+                console.print(f"[dim]错误发生在第 {e.lineno} 行, 第 {e.colno} 列。[/dim]")
+
+            console.print(
+                f"[bold yellow]重要提示：[/bold yellow] 导致错误的原始响应已保存到下面的独立文件中，以防被后续请求覆盖：")
+            console.print(f"[cyan]{error_log_path}[/cyan]")
             return None
 
     def verify_login(self) -> Optional[Dict[str, Any]]:
@@ -120,7 +137,6 @@ class NgaClient:
             return None
         verify_url = f"{self.BASE_URL}/thread.php?fid=-7"
         try:
-            # 使用 GBK 解码
             response = self.client.get(verify_url)
             response.raise_for_status()
             html_content = response.content.decode('gbk', errors='ignore')

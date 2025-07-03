@@ -72,7 +72,6 @@ def display_topics(console: Console, topics_data: Dict[str, Any], page: int) -> 
 
     title = f"帖子列表 (第 {page} 页)"
 
-    # --- 核心修改点：恢复了表格边框 ---
     table = Table(title=title, expand=True, title_justify="center", header_style="bold magenta", box=box.HEAVY_HEAD)
     table.add_column("#", style="dim", width=4, justify="right")
     table.add_column("标题", style="cyan", no_wrap=False, ratio=50)
@@ -91,19 +90,20 @@ def display_topics(console: Console, topics_data: Dict[str, Any], page: int) -> 
         return []
 
     for topic in topic_list:
-        if 'lastpost' not in topic or not str(topic['lastpost']).isdigit():
+        if 'lastpost' not in topic or not str(topic.get('lastpost')).isdigit():
             topic['lastpost'] = topic.get('postdate', 0)
 
     sorted_topics = sorted(topic_list, key=lambda x: int(x.get('lastpost', 0)), reverse=True)
 
     for i, topic in enumerate(sorted_topics, 1):
-        title_text = escape(str(topic.get('subject', '无标题')))
-        author = escape(str(topic.get('author', '未知')))
+        # --- 修复：使用 `or` 来处理 API 可能返回 null 的情况 ---
+        title_text = escape(topic.get('subject') or '无标题')
+        author = escape(topic.get('author') or '未知')
         replies = str(topic.get('replies', 0))
 
         post_timestamp = topic.get('postdate', 0)
         post_time_str = datetime.datetime.fromtimestamp(int(post_timestamp)).strftime(
-            '%Y-%m-%d %H:%M:%S') if str(post_timestamp).isdigit() else '未知时间'
+            '%Y-%m-%d %H:%M:%S') if str(post_timestamp).isdigit() and int(post_timestamp) > 0 else '未知时间'
 
         if 'b' in topic.get('titlefont', ''): title_text = f"[bold]{title_text}[/bold]"
 
@@ -147,7 +147,8 @@ def display_topic_details(console: Console, details: Dict[str, Any], page: int, 
         author_id = str(reply.get('authorid'))
         author_info = users.get(author_id, {})
 
-        author_name = str(author_info.get('username', '未知用户'))
+        # --- 修复：同样使用 or 处理可能为 null 的 username ---
+        author_name = str(author_info.get('username') or '未知用户')
 
         post_timestamp = reply.get('postdatetimestamp', 0)
         if post_timestamp and str(post_timestamp).isdigit():
