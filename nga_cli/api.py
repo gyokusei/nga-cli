@@ -38,6 +38,7 @@ class NgaClient:
         if cookie_string:
             self.headers['Cookie'] = cookie_string
 
+        # 代理设置由调用方 (cli.py) 通过设置环境变量来完成, httpx 会自动识别
         self.client = httpx.Client(headers=self.headers, timeout=20.0)
 
     def _save_request_log(self, method: str, url: str, params: Optional[Dict], headers: Dict):
@@ -71,35 +72,34 @@ class NgaClient:
                                            data=params if method == 'POST' else None)
             response.raise_for_status()
 
-            data = {}
-            raw_text_for_log = ""
+            raw_bytes = response.content
+            raw_text = ""
 
-            # --- 核心修改点：智能解码 ---
+            # --- 核心修改点：更可靠的解码逻辑 ---
             try:
-                # 1. 尝试使用 httpx 的默认解码（通常是 UTF-8）
-                raw_text_for_log = response.text
-                data = json.loads(raw_text_for_log, strict=False)
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                # 2. 如果失败，回退到 GBK 解码
-                raw_text_gbk = response.content.decode('gbk', errors='replace')
-                raw_text_for_log = raw_text_gbk
+                # 1. 直接用 utf-8 解码 bytes
+                raw_text = raw_bytes.decode('utf-8')
+            except UnicodeDecodeError:
+                # 2. 如果 utf-8 失败，说明是 gbk，用 gbk 解码
+                raw_text = raw_bytes.decode('gbk', errors='replace')
 
-                # 清理某些接口返回的 JSONP 包装
-                if raw_text_gbk.startswith('window.script_muti_get_var_store='):
-                    raw_text_gbk = raw_text_gbk[len('window.script_muti_get_var_store='):-1]
+            # 清理某些接口返回的 JSONP 包装
+            if raw_text.startswith('window.script_muti_get_var_store='):
+                raw_text = raw_text[len('window.script_muti_get_var_store='):-1]
 
-                data = json.loads(raw_text_gbk, strict=False)
+            data = json.loads(raw_text, strict=False)
 
             # 保存最终成功解析的响应内容
             with open(config.LAST_RESPONSE_PATH, 'w', encoding='utf-8') as f:
-                f.write(raw_text_for_log)
+                f.write(json.dumps(data, indent=2, ensure_ascii=False))
 
             if "error" in data and data["error"]:
                 error_msg = data['error'][0] if isinstance(data['error'], list) and data['error'] else data['error']
                 console.print(Panel(f"[bold red]API 错误:[/bold red] {error_msg}", border_style="red"))
                 return None
 
-            return data.get("data", {})
+            # 返回 data 字段，如果不存在则返回整个解析后的字典
+            return data.get("data", data)
 
         except (httpx.RequestError, json.JSONDecodeError, Exception) as e:
             self._save_error_log(url, e, params)
